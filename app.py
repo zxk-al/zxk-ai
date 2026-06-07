@@ -77,32 +77,61 @@ def predict_text(model, vocab, vocab_size, text):
         pred_cls = torch.argmax(out, dim=-1).item()
         return label_map[pred_cls]
 
-# 【国内免费新闻接口】抓取头条热点（稳定、无需翻墙）
+# 【备用接口】稳定国内头条新闻抓取（不会再报解析错误）
 @st.cache_data(ttl=3600)
 def fetch_latest_news(max_news=30):
-    try:
-        url = "https://api.vvhan.com/api/topNews"
-        res = requests.get(url, timeout=10)
-        res.raise_for_status()
-        data = json.loads(res.text)
-        articles = []
-        if data.get("success") and data.get("data"):
-            for item in data["data"][:max_news]:
-                title = item.get("title", "").strip()
-                desc = item.get("desc", "").strip()
-                link = item.get("url", "")
-                content = f"{title} {desc}".strip()
-                if len(content) > 20:
-                    articles.append({
-                        "title": title,
-                        "desc": desc,
-                        "link": link,
-                        "content": content
-                    })
-        return articles
-    except Exception as e:
-        st.error(f"新闻抓取失败：{str(e)}")
-        return []
+    # 接口列表：自动切换可用的备用源
+    api_urls = [
+        "https://api.oioweb.cn/api/common/HotList?type=toutiao",
+        "https://api.qqsuu.cn/api/dm-toutiao"
+    ]
+
+    for url in api_urls:
+        try:
+            st.info(f"尝试从备用接口抓取：{url}")
+            res = requests.get(url, timeout=15)
+            res.raise_for_status()
+            data = res.json()
+
+            articles = []
+            if "result" in data and "data" in data["result"]:
+                # 适配 OIOWEB 格式
+                for item in data["result"]["data"][:max_news]:
+                    title = item.get("title", "").strip()
+                    link = item.get("url", "")
+                    hot = item.get("hot", "")
+                    content = f"{title} {hot}".strip()
+                    if len(content) > 20:
+                        articles.append({
+                            "title": title,
+                            "desc": hot,
+                            "link": link,
+                            "content": content
+                        })
+            elif "data" in data:
+                # 适配 QQSUU 格式
+                for item in data["data"][:max_news]:
+                    title = item.get("title", "").strip()
+                    link = item.get("url", "")
+                    desc = item.get("desc", "")
+                    content = f"{title} {desc}".strip()
+                    if len(content) > 20:
+                        articles.append({
+                            "title": title,
+                            "desc": desc,
+                            "link": link,
+                            "content": content
+                        })
+
+            if articles:
+                return articles
+
+        except Exception as e:
+            st.warning(f"接口 {url} 失败：{str(e)}，自动切换下一个...")
+            continue
+
+    st.error("❌ 所有备用接口均无法获取新闻，请稍后重试")
+    return []
 
 # 关键词提取
 def extract_keywords(text, topK=5):
@@ -192,16 +221,15 @@ def main():
             else:
                 st.warning("请输入新闻文本内容！")
 
-    # 标签2：热点挖掘（国内接口，稳定）
+    # 标签2：热点挖掘（双备用接口，自动重试）
     with tab2:
         st.subheader("🌐 自动抓取全网热点，按热度排序、生成摘要")
-        st.info("数据源：国内综合新闻头条，无需翻墙")
+        st.info("数据源：双备用头条接口，国内可访问，无需翻墙")
 
         if st.button("开始挖掘实时热点", type="primary"):
             with st.spinner("正在抓取新闻并聚类分析，请稍等..."):
                 articles = fetch_latest_news(max_news=30)
                 if not articles:
-                    st.error("❌ 未能获取到新闻，请稍后重试")
                     return
 
                 if len(articles) < 3:
