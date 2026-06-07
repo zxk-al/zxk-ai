@@ -26,22 +26,16 @@ label_map = {
     5:"时政",6:"财经",7:"科技",8:"时尚",9:"游戏"
 }
 
-# 更完善的请求头，模拟真实浏览器
+# 更完善的请求头
 HEADERS_LIST = [
     {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-        "Referer": "https://s.weibo.com/",
+        "Referer": "https://www.baidu.com/",
         "Accept-Language": "zh-CN,zh;q=0.9",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
-    },
-    {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Safari/605.1.15",
-        "Referer": "https://s.weibo.com/",
-        "Accept-Language": "zh-CN,zh;q=0.9"
     }
 ]
 
-# 随机选择请求头，降低被识别为爬虫的概率
 def get_random_headers():
     return random.choice(HEADERS_LIST)
 
@@ -108,76 +102,45 @@ def cluster_hot_topics(sample_texts):
     hot_clusters = sorted([k for k in counter if k!=-1], key=lambda x: counter[x], reverse=True)
     return labels, counter, hot_clusters
 
-# ===================== 三平台爬虫（修复403问题） =====================
+# ===================== 三平台爬虫（稳定版，使用公开API） =====================
 def crawl_weibo():
-    """微博热搜 - 修复403问题，改用网页解析方案"""
+    """微博热搜 - 使用公开第三方API"""
     try:
-        # 先请求首页获取Cookie
-        session = requests.Session()
-        headers = get_random_headers()
-        session.get("https://s.weibo.com/", headers=headers, timeout=10)
-        time.sleep(1)
-
-        # 再请求热搜页面
-        url = "https://s.weibo.com/top/summary"
-        response = session.get(url, headers=headers, timeout=10)
+        url = "https://api.vvhan.com/api/hotlist/wbHot"
+        response = requests.get(url, headers=get_random_headers(), timeout=15)
         response.raise_for_status()
-        response.encoding = "utf-8"
-
-        soup = BeautifulSoup(response.text, "html.parser")
-        hot_items = soup.select("td.td-02 a")
-        hot_list = []
-        for item in hot_items[:20]:
-            title = item.get_text(strip=True)
-            if title and len(title) > 1:
-                hot_list.append(title)
-        return hot_list if hot_list else []
+        data = response.json()
+        if data.get("success") and data.get("data"):
+            return [item["title"] for item in data["data"]][:20]
+        return []
     except Exception as e:
         st.error(f"微博抓取失败：{e}")
         return []
 
 def crawl_zhihu():
-    """知乎热榜（解析JSON）"""
+    """知乎热榜 - 使用公开第三方API"""
     try:
-        url = "https://www.zhihu.com/billboard"
-        headers = get_random_headers()
-        r = requests.get(url, headers=headers, timeout=10)
-        r.raise_for_status()
-        soup = BeautifulSoup(r.text, "html.parser")
-        script = soup.find("script", id="js-initialData")
-        if not script:
-            return []
-        js_data = json.loads(script.string)
-        hot_list = js_data["initialState"]["topstory"]["hotList"]
-        titles = []
-        for item in hot_list:
-            try:
-                titles.append(item["target"]["titleArea"]["text"])
-            except:
-                pass
-        return titles[:20]
+        url = "https://api.vvhan.com/api/hotlist/zhihuHot"
+        response = requests.get(url, headers=get_random_headers(), timeout=15)
+        response.raise_for_status()
+        data = response.json()
+        if data.get("success") and data.get("data"):
+            return [item["title"] for item in data["data"]][:20]
+        return []
     except Exception as e:
         st.error(f"知乎抓取失败：{e}")
         return []
 
 def crawl_toutiao():
-    """今日头条热点（静态解析）"""
+    """今日头条热点 - 使用公开第三方API"""
     try:
-        url = "https://www.toutiao.com/"
-        headers = get_random_headers()
-        r = requests.get(url, headers=headers, timeout=10)
-        r.raise_for_status()
-        soup = BeautifulSoup(r.text, "html.parser")
-        # 换一种选择器适配头条新版页面
-        items = soup.select("div.cs-view.cs-pages div.cs-card")
-        titles = []
-        for item in items[:20]:
-            title_tag = item.select_one("h3, div.title")
-            if title_tag:
-                t = title_tag.get_text(strip=True)
-                if t:
-                    titles.append(t)
-        return titles[:20]
+        url = "https://api.vvhan.com/api/hotlist/toutiao"
+        response = requests.get(url, headers=get_random_headers(), timeout=15)
+        response.raise_for_status()
+        data = response.json()
+        if data.get("success") and data.get("data"):
+            return [item["title"] for item in data["data"]][:20]
+        return []
     except Exception as e:
         st.error(f"今日头条抓取失败：{e}")
         return []
@@ -294,7 +257,7 @@ def main():
                         group = [texts[j] for j, cl in enumerate(lbl) if cl == cid]
                         st.markdown(f"**热点{i+1}**（{cnt[cid]}条）：{group[0][:120]}...")
 
-    # 3. 多平台爬虫+分析（修复版）
+    # 3. 多平台爬虫+分析（稳定版）
     with tab3:
         st.subheader("微博 / 今日头条 / 知乎 实时热点抓取")
         plat = st.radio("选择平台", ["微博热搜", "今日头条热点", "知乎热榜"])
