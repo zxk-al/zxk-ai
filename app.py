@@ -25,6 +25,8 @@ if not os.path.exists(MODEL_PATH):
 # model = torch.load(MODEL_PATH)
 import streamlit as st
 import torch
+import pickle
+from io import BytesIO
 import jieba
 import pandas as pd
 import numpy as np
@@ -79,24 +81,26 @@ class CNNLSTM(nn.Module):
 # ------------------- 加载模型和词汇表 -------------------
 @st.cache_resource
 def load_model_and_vocab():
-    # 加载词汇表
-    vocab = torch.load("vocab.pth", map_location=DEVICE)
+    # 1. 加载词汇表（保持不变）
+    vocab = torch.load("vocab.pth", map_location=DEVICE, weights_only=False)
 
-    # 加载模型（关键：加上 weights_only=False）
+    # 2. 关键修改：用 pickle 手动加载模型权重
     model = CNNLSTM(vocab_size=VOCAB_SIZE)
-    model.load_state_dict(
-        torch.load(
-            "cnn_lstm_model.pth",
-            map_location=DEVICE,
-            weights_only=False  # 这一行是修复的关键！
-        )
-    )
+
+    # 手动读取模型文件
+    with open("cnn_lstm_model.pth", "rb") as f:
+        # 用 pickle 直接加载文件内容
+        state_dict = pickle.load(f)
+
+    # 把权重加载到模型里
+    model.load_state_dict(state_dict)
+
     model.to(DEVICE)
     model.eval()
     return model, vocab
 
 
-# 调用函数加载
+# 调用函数加载模型
 model, vocab = load_model_and_vocab()
 
 # ===================== 文本预处理 & 预测函数 =====================
