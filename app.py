@@ -3,6 +3,7 @@ import torch
 import jieba
 import numpy as np
 import os
+import requests
 from collections import Counter
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.cluster import DBSCAN
@@ -19,7 +20,43 @@ label_map = {
     5:"时政",6:"财经",7:"科技",8:"时尚",9:"游戏"
 }
 
-# ===================== 1. 定义 CNNLSTM 模型 (和训练代码完全一致) =====================
+# ===================== 【你需要修改这里】百度网盘直链下载地址 =====================
+# 替换成你解析后的百度网盘永久直链
+BAIDU_NETDISK_LINKS = {
+    "cnn_lstm_model.pth": "https://你的网盘直链地址/model.pth",
+    "vocab.pth": "https://你的网盘直链地址/vocab.pth"
+}
+
+# ===================== 模型文件下载工具函数 =====================
+def download_file(url, save_path):
+    """从百度网盘直链下载文件，带进度条"""
+    if os.path.exists(save_path):
+        st.info(f"✅ {os.path.basename(save_path)} 已存在，无需下载")
+        return True
+
+    st.info(f"📥 正在下载 {os.path.basename(save_path)}...")
+    try:
+        response = requests.get(url, stream=True, timeout=300)
+        response.raise_for_status()  # 检查请求是否成功
+
+        total_size = int(response.headers.get("content-length", 0))
+        downloaded_size = 0
+
+        with open(save_path, "wb") as f, st.progress(0) as progress_bar:
+            for chunk in response.iter_content(chunk_size=1024*1024):  # 1MB 分块下载
+                if chunk:
+                    f.write(chunk)
+                    downloaded_size += len(chunk)
+                    progress = downloaded_size / total_size if total_size > 0 else 0
+                    progress_bar.progress(min(progress, 1.0))
+
+        st.success(f"✅ {os.path.basename(save_path)} 下载完成！")
+        return True
+    except Exception as e:
+        st.error(f"❌ 下载失败：{str(e)}")
+        return False
+
+# ===================== 1. 定义 CNNLSTM 模型 =====================
 class CNNLSTM(torch.nn.Module):
     def __init__(self, vocab_size):
         super().__init__()
@@ -50,11 +87,9 @@ class CNNLSTM(torch.nn.Module):
 
 # ===================== 2. 工具函数 =====================
 def text_cut(text):
-    """分词"""
     return jieba.lcut(text)
 
 def text2idx(text, vocab, vocab_size, seq_len=64):
-    """文本转数字序列（修复版：传入vocab_size参数）"""
     words = text_cut(text)
     idx = []
     for word in words:
@@ -68,19 +103,25 @@ def text2idx(text, vocab, vocab_size, seq_len=64):
         idx = idx[:seq_len]
     return idx
 
-# ===================== 3. 加载模型、词表、词表大小 (缓存加速) =====================
+# ===================== 3. 加载模型、词表、词表大小 (含自动下载) =====================
 @st.cache_resource
 def load_all_resources():
-    # 读取词表大小
+    # 1. 下载模型文件
+    model_path = "cnn_lstm_model.pth"
+    vocab_path = "vocab.pth"
+    download_file(BAIDU_NETDISK_LINKS["cnn_lstm_model.pth"], model_path)
+    download_file(BAIDU_NETDISK_LINKS["vocab.pth"], vocab_path)
+
+    # 2. 读取词表大小
     with open("vocab_size.txt", "r", encoding="utf-8") as f:
         vocab_size = int(f.read().strip())
 
-    # 加载词表
-    vocab = torch.load("vocab.pth", map_location="cpu")
+    # 3. 加载词表
+    vocab = torch.load(vocab_path, map_location="cpu")
 
-    # 初始化模型 + 加载权重
+    # 4. 初始化模型 + 加载权重
     model = CNNLSTM(vocab_size=vocab_size).to(DEVICE)
-    model.load_state_dict(torch.load("cnn_lstm_model.pth", map_location=DEVICE))
+    model.load_state_dict(torch.load(model_path, map_location=DEVICE))
     model.eval()
 
     return model, vocab, vocab_size
@@ -89,10 +130,8 @@ def load_all_resources():
 def predict_text(model, vocab, vocab_size, text):
     model.eval()
     with torch.no_grad():
-        # 文本转序列（传入vocab_size）
         idx_arr = text2idx(text, vocab, vocab_size, SEQ_LEN)
         x = torch.LongTensor([idx_arr]).to(DEVICE)
-        # 预测
         out = model(x)
         pred_cls = torch.argmax(out, dim=-1).item()
         return label_map[pred_cls]
@@ -110,9 +149,79 @@ def get_hot_tops(sample_texts):
                          key=lambda x: cluster_cnt[x], reverse=True)
     return cluster_label, cluster_cnt, hot_cluster
 
-# ===================== 6. 页面主体 =====================
+# ===================== 6. 页面主体 + 星空背景美化 =====================
 def main():
     st.set_page_config(page_title="CNN-LSTM 新闻分类 & 热点挖掘", layout="wide")
+
+    # --- 紫色星空背景 CSS ---
+    st.markdown(
+        """
+        <style>
+        .stApp {
+            background: linear-gradient(to bottom, #0b0423 0%, #190b37 40%, #2a1052 70%, #1a0736 100%);
+            color: #f0e6ff;
+            font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+        }
+        h1, h2, h3, h4, h5, h6 {
+            color: #e8d8ff;
+            text-shadow: 0 0 10px #9966ff, 0 0 20px #7a43b6;
+        }
+        .stButton>button {
+            background: linear-gradient(90deg, #7a43b6 0%, #9966ff 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            padding: 0.6rem 1.2rem;
+            font-weight: bold;
+            box-shadow: 0 0 15px rgba(122, 67, 182, 0.6);
+            transition: all 0.3s ease;
+        }
+        .stButton>button:hover {
+            transform: scale(1.05);
+            box-shadow: 0 0 25px rgba(153, 102, 255, 0.8);
+        }
+        .stTextArea textarea {
+            background-color: rgba(40, 20, 70, 0.7) !important;
+            color: #f0e6ff !important;
+            border: 1px solid #7a43b6;
+            border-radius: 8px;
+        }
+        .stTabs [data-baseweb="tab-list"] { gap: 10px; }
+        .stTabs [data-baseweb="tab"] {
+            background-color: rgba(122, 67, 182, 0.3);
+            color: #e8d8ff;
+            border-radius: 8px 8px 0 0;
+            padding: 0.5rem 1rem;
+        }
+        .stTabs [aria-selected="true"] {
+            background-color: #7a43b6 !important;
+            color: white !important;
+        }
+        .stSuccess {
+            background-color: rgba(0, 128, 0, 0.2);
+            border: 1px solid #00ff88;
+            border-radius: 8px;
+        }
+        .stWarning {
+            background-color: rgba(255, 165, 0, 0.2);
+            border: 1px solid #ffcc00;
+            border-radius: 8px;
+        }
+        .stError {
+            background-color: rgba(255, 0, 0, 0.2);
+            border: 1px solid #ff4444;
+            border-radius: 8px;
+        }
+        hr { border-color: #7a43b6; box-shadow: 0 0 5px #9966ff; }
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #190b37; }
+        ::-webkit-scrollbar-thumb { background: #7a43b6; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #9966ff; }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+
     st.title("📰 基于CNN-LSTM的新闻分类与热点挖掘系统")
 
     # 加载资源
@@ -121,7 +230,7 @@ def main():
         st.success("✅ 模型、词表加载完成！")
     except Exception as e:
         st.error(f"❌ 资源加载失败：{str(e)}")
-        st.info("请检查 cnn_lstm_model.pth / vocab.pth / vocab_size.txt 是否在当前目录")
+        st.info("请检查百度网盘直链地址是否正确，或文件是否存在")
         return
 
     # 分栏布局
@@ -143,14 +252,12 @@ def main():
         st.subheader("测试集新闻热点挖掘 (TF-IDF + DBSCAN)")
         st.info("默认抽取部分新闻进行聚类，展示TOP5热点事件")
 
-        # 读取测试集文本（和训练代码路径一致）
         data_dir = r"E:\PythonProject\data\cnews"
         test_path = os.path.join(data_dir, "cnews.test.txt")
         if not os.path.exists(test_path):
             st.error(f"测试文件不存在：{test_path}")
             return
 
-        # 读取测试文本
         def load_test_data(path):
             texts = []
             labels = []
