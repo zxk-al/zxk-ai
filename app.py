@@ -1,27 +1,22 @@
 import os
 import requests
 
-# -------------------------- 配置部分（只改这里！） --------------------------
-# 1. 模型文件的保存路径（和你本地的路径保持一致）
+# -------------------------- 配置部分 --------------------------
 MODEL_PATH = "cnn_lstm_model.pth"
-
-# 2. 替换成你的百度网盘文件直链（需要解析后的直接下载链接）
-MODEL_URL = "https://pan.baidu.com/s/1M-CHAS4BvRvBE4vOqkiA4Q?pwd=9527 "
-# ---------------------------------------------------------------------------
+MODEL_URL = "https://pan.baidu.com/s/1M-CHAS4BvRvBE4vOqkiA4Q?pwd=9527"
+# -----------------------------------------------------------
 
 # 自动下载模型文件
 if not os.path.exists(MODEL_PATH):
     print(f"正在下载模型文件 {MODEL_PATH}...")
-    # 创建文件夹（如果路径包含子目录）
-    os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
 
     # 流式下载，避免大文件占用过多内存
     response = requests.get(MODEL_URL, stream=True)
-    response.raise_for_status()  # 下载失败时抛出错误
+    response.raise_for_status()
 
     # 写入文件
     with open(MODEL_PATH, "wb") as f:
-        for chunk in response.iter_content(chunk_size=1024 * 1024):  # 1MB 分块下载
+        for chunk in response.iter_content(chunk_size=1024 * 1024):
             if chunk:
                 f.write(chunk)
     print(f"模型文件 {MODEL_PATH} 下载完成！")
