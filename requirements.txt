@@ -8,3 +8,4 @@ seaborn
 requests
 scikit-learn
 gnews
+jieba.analyse
