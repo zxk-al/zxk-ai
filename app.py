@@ -76,15 +76,27 @@ class CNNLSTM(nn.Module):
         return out
 
 # ===================== 加载模型与词表（缓存加速） =====================
+# ------------------- 加载模型和词汇表 -------------------
 @st.cache_resource
 def load_model_and_vocab():
-    model = CNNLSTM(VOCAB_SIZE)
-    model.load_state_dict(torch.load("cnn_lstm_model.pth", map_location=DEVICE))
+    # 加载词汇表
+    vocab = torch.load("vocab.pth", map_location=DEVICE)
+
+    # 加载模型（关键：加上 weights_only=False）
+    model = CNNLSTM(vocab_size=VOCAB_SIZE)
+    model.load_state_dict(
+        torch.load(
+            "cnn_lstm_model.pth",
+            map_location=DEVICE,
+            weights_only=False  # 这一行是修复的关键！
+        )
+    )
     model.to(DEVICE)
     model.eval()
-    vocab = torch.load("vocab.pth")
     return model, vocab
 
+
+# 调用函数加载
 model, vocab = load_model_and_vocab()
 
 # ===================== 文本预处理 & 预测函数 =====================
