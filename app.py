@@ -8,42 +8,59 @@ from collections import Counter
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.cluster import DBSCAN
 
-# ===================== 全局配置 (和main.py保持一致) =====================
+# ===================== 全局配置 =====================
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 SEQ_LEN = 64
 EMB_DIM = 128
 CLASS_NUM = 10
 
-# 标签映射
 label_map = {
     0:"体育",1:"娱乐",2:"家居",3:"房产",4:"教育",
     5:"时政",6:"财经",7:"科技",8:"时尚",9:"游戏"
 }
 
-# ===================== 【你需要修改这里】百度网盘直链下载地址 =====================
-# 替换成你解析后的百度网盘永久直链
-BAIDU_NETDISK_LINKS = {
-    "cnn_lstm_model.pth": "https://https://pan.baidu.com/s/1thRVG9s5uX0VcKLZEikPXQ?pwd=9527/model.pth",
-    "vocab.pth": "https://https://pan.baidu.com/s/1thRVG9s5uX0VcKLZEikPXQ?pwd=9527/vocab.pth"
-}
+# ===================== 【你需要修改这里】百度网盘直链 =====================
+BAIDU_NETDISK_MODEL_URL = "https://https://pan.baidu.com/s/1thRVG9s5uX0VcKLZEikPXQ?pwd=9527/cnn_lstm_model.pth"
 
-# ===================== 模型文件下载工具函数 =====================
-def download_file(url, save_path):
-    """从百度网盘直链下载文件，带进度条"""
+# ===================== 模型文件下载工具（带有效性校验） =====================
+def download_model_file(url, save_path):
+    """
+    从网盘下载模型文件，校验文件是否为有效模型
+    """
+    # 如果文件已存在，先校验是否有效
     if os.path.exists(save_path):
-        st.info(f"✅ {os.path.basename(save_path)} 已存在，无需下载")
-        return True
+        st.info(f"✅ {os.path.basename(save_path)} 已存在，校验有效性...")
+        try:
+            # 读取文件开头，判断是否为HTML错误页面
+            with open(save_path, "rb") as f:
+                head = f.read(100)
+            if b"<html" in head or b"<!DOCTYPE" in head:
+                st.warning(f"⚠️ {os.path.basename(save_path)} 是无效HTML文件，将重新下载")
+                os.remove(save_path)
+            else:
+                st.success(f"✅ {os.path.basename(save_path)} 校验通过，无需下载")
+                return True
+        except Exception as e:
+            st.warning(f"⚠️ 校验失败，将重新下载：{str(e)}")
+            os.remove(save_path)
 
-    st.info(f"📥 正在下载 {os.path.basename(save_path)}...")
+    # 下载文件
+    st.info(f"📥 正在下载 {os.path.basename(save_path)}，请稍等...")
     try:
-        response = requests.get(url, stream=True, timeout=300)
-        response.raise_for_status()  # 检查请求是否成功
+        response = requests.get(url, stream=True, timeout=600)  # 超时时间设为10分钟
+        response.raise_for_status()
 
+        # 提前校验响应内容，避免保存HTML
+        if b"<html" in response.content[:200] or b"<!DOCTYPE" in response.content[:200]:
+            st.error("❌ 下载的是HTML错误页面，请检查网盘链接是否有效！")
+            return False
+
+        # 分块下载，带进度条
         total_size = int(response.headers.get("content-length", 0))
         downloaded_size = 0
 
         with open(save_path, "wb") as f, st.progress(0) as progress_bar:
-            for chunk in response.iter_content(chunk_size=1024*1024):  # 1MB 分块下载
+            for chunk in response.iter_content(chunk_size=1024*1024):  # 1MB分块
                 if chunk:
                     f.write(chunk)
                     downloaded_size += len(chunk)
@@ -103,35 +120,30 @@ def text2idx(text, vocab, vocab_size, seq_len=64):
         idx = idx[:seq_len]
     return idx
 
-# ===================== 3. 加载模型、词表、词表大小 (含自动下载) =====================
+# ===================== 3. 加载模型、词表、词表大小 =====================
 @st.cache_resource
 def load_all_resources():
     # 1. 下载模型文件
     model_path = "cnn_lstm_model.pth"
-    vocab_path = "vocab.pth"
-    download_file(BAIDU_NETDISK_LINKS["cnn_lstm_model.pth"], model_path)
-    download_file(BAIDU_NETDISK_LINKS["vocab.pth"], vocab_path)
+    if not download_model_file(BAIDU_NETDISK_MODEL_URL, model_path):
+        raise RuntimeError("模型文件下载失败，请检查网盘链接！")
 
-    # 2. 读取词表大小
+    # 2. 读取词表大小（已在Git中）
     with open("vocab_size.txt", "r", encoding="utf-8") as f:
         vocab_size = int(f.read().strip())
 
-    # 3. 加载词表（兼容 PyTorch 2.6+）
-    vocab = torch.load(
-        vocab_path, 
-        map_location="cpu",
-        weights_only=False  # 关键：关闭安全模式，允许加载完整 pickle 文件
-    )
+    # 3. 加载词表（已在Git中）
+    vocab_path = "vocab.pth"
+    if not os.path.exists(vocab_path):
+        raise FileNotFoundError(f"词表文件不存在：{vocab_path}")
 
-# 4. 初始化模型 + 加载权重（兼容 PyTorch 2.6+）
+    # 兼容PyTorch 2.6+安全加载
+    torch.serialization.add_safe_globals([dict, list])
+    vocab = torch.load(vocab_path, map_location="cpu", weights_only=False)
+
+    # 4. 初始化模型 + 加载权重
     model = CNNLSTM(vocab_size=vocab_size).to(DEVICE)
-    model.load_state_dict(
-        torch.load(
-            model_path, 
-            map_location=DEVICE,
-            weights_only=False  # 关键：同样加上这个参数
-        )
-    )
+    model.load_state_dict(torch.load(model_path, map_location=DEVICE, weights_only=False))
     model.eval()
 
     return model, vocab, vocab_size
