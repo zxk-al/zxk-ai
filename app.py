@@ -116,12 +116,22 @@ def load_all_resources():
     with open("vocab_size.txt", "r", encoding="utf-8") as f:
         vocab_size = int(f.read().strip())
 
-    # 3. 加载词表
-    vocab = torch.load(vocab_path, map_location="cpu")
+    # 3. 加载词表（兼容 PyTorch 2.6+）
+    vocab = torch.load(
+        vocab_path, 
+        map_location="cpu",
+        weights_only=False  # 关键：关闭安全模式，允许加载完整 pickle 文件
+    )
 
-    # 4. 初始化模型 + 加载权重
+# 4. 初始化模型 + 加载权重（兼容 PyTorch 2.6+）
     model = CNNLSTM(vocab_size=vocab_size).to(DEVICE)
-    model.load_state_dict(torch.load(model_path, map_location=DEVICE))
+    model.load_state_dict(
+        torch.load(
+            model_path, 
+            map_location=DEVICE,
+            weights_only=False  # 关键：同样加上这个参数
+        )
+    )
     model.eval()
 
     return model, vocab, vocab_size
