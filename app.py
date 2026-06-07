@@ -1,11 +1,14 @@
 import streamlit as st
 import torch
 import jieba
+import jieba.analyse
 import numpy as np
 import os
+import re
 from collections import Counter
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.cluster import DBSCAN
+from gnews import GNews
 
 # ===================== 全局配置 =====================
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -19,7 +22,6 @@ label_map = {
     5:"时政",6:"财经",7:"科技",8:"时尚",9:"游戏"
 }
 
-# 模型文件本地缓存名
 MODEL_CACHE_NAME = "cnn_lstm_model.pth"
 
 # ===================== 定义 CNNLSTM 模型 =====================
@@ -51,7 +53,7 @@ class CNNLSTM(torch.nn.Module):
         out = self.fc(out)
         return out
 
-# ===================== 文本处理工具函数 =====================
+# ===================== 文本工具函数 =====================
 def text_cut(text):
     return jieba.lcut(text)
 
@@ -69,7 +71,7 @@ def text2idx(text, vocab, vocab_size, seq_len=64):
         idx = idx[:seq_len]
     return idx
 
-# ===================== 单文本预测函数（确保全局可调用） =====================
+# 单条新闻分类（原有功能保留）
 def predict_text(model, vocab, vocab_size, text):
     model.eval()
     with torch.no_grad():
@@ -79,185 +81,158 @@ def predict_text(model, vocab, vocab_size, text):
         pred_cls = torch.argmax(out, dim=-1).item()
         return label_map[pred_cls]
 
-# ===================== 热点挖掘函数 =====================
-@st.cache_data
-def get_hot_tops(sample_texts):
-    cut_texts = [" ".join(text_cut(t)) for t in sample_texts]
-    vec = TfidfVectorizer(max_features=3000)
-    tfidf_data = vec.fit_transform(cut_texts)
-    db = DBSCAN(eps=0.8, min_samples=5)
-    cluster_label = db.fit_predict(tfidf_data)
-    cluster_cnt = Counter(cluster_label)
-    hot_cluster = sorted([k for k in cluster_cnt.keys() if k != -1],
-                         key=lambda x: cluster_cnt[x], reverse=True)
-    return cluster_label, cluster_cnt, hot_cluster
+# 网络抓取最新新闻
+@st.cache_data(ttl=3600)
+def fetch_latest_news(max_news=80):
+    gn = GNews(language='zh', country='CN', max_results=max_news)
+    news = gn.get_top_news()
+    articles = []
+    for item in news:
+        title = item.get('title', '')
+        desc = item.get('description', '')
+        link = item.get('url', '')
+        content = f"{title} {desc}"
+        if len(content.strip()) > 20:
+            articles.append({
+                "title": title,
+                "desc": desc,
+                "link": link,
+                "content": content
+            })
+    return articles
 
-# ===================== 页面主体 + 紫色星空样式 =====================
+# 关键词提取
+def extract_keywords(text, topK=5):
+    return jieba.analyse.textrank(text, topK=topK, withWeight=False, allowPOS=('ns', 'n', 'vn', 'v'))
+
+# 简单文本摘要
+def simple_summary(text, sent_cnt=2):
+    sentences = re.split(r'[。！？]', text)
+    sentences = [s.strip() for s in sentences if len(s.strip()) > 10]
+    if len(sentences) <= sent_cnt:
+        return "。".join(sentences) + "。"
+    return "。".join(sentences[:sent_cnt]) + "。"
+
+# 热点聚类 + 热度排序
+def cluster_hot_topics(articles):
+    texts = [a["content"] for a in articles]
+    cut_texts = [" ".join(text_cut(t)) for t in texts]
+    vec = TfidfVectorizer(max_features=5000)
+    tfidf = vec.fit_transform(cut_texts)
+    db = DBSCAN(eps=0.75, min_samples=3)
+    labels = db.fit_predict(tfidf)
+    counter = Counter(labels)
+    hot_clusters = sorted([k for k in counter if k != -1], key=lambda x: counter[x], reverse=True)
+    return labels, counter, hot_clusters
+
+# ===================== 页面主体 =====================
 def main():
-    st.set_page_config(page_title="CNN-LSTM 新闻分类 & 热点挖掘", layout="wide")
+    st.set_page_config(page_title="新闻分类 & 实时热点挖掘", layout="wide")
 
-    # 紫色深邃星空背景样式
+    # 紫色星空样式
     st.markdown(
         """
         <style>
         .stApp {
             background: linear-gradient(to bottom, #0b0423 0%, #190b37 40%, #2a1052 70%, #1a0736 100%);
             color: #f0e6ff;
-            font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+            font-family: 'Microsoft YaHei', sans-serif;
         }
-        h1, h2, h3, h4, h5, h6 {
+        h1, h2, h3 {
             color: #e8d8ff;
-            text-shadow: 0 0 10px #9966ff, 0 0 20px #7a43b6;
+            text-shadow: 0 0 10px #9966ff;
         }
         .stButton>button {
-            background: linear-gradient(90deg, #7a43b6 0%, #9966ff 100%);
+            background: linear-gradient(90deg, #7a43b6, #9966ff);
             color: white;
             border: none;
             border-radius: 8px;
-            padding: 0.6rem 1.2rem;
+            padding: 0.5rem 1.2rem;
             font-weight: bold;
-            box-shadow: 0 0 15px rgba(122, 67, 182, 0.6);
-            transition: all 0.3s ease;
-        }
-        .stButton>button:hover {
-            transform: scale(1.05);
-            box-shadow: 0 0 25px rgba(153, 102, 255, 0.8);
         }
         .stTextArea textarea {
-            background-color: rgba(40, 20, 70, 0.7) !important;
-            color: #f0e6ff !important;
+            background: rgba(40,20,70,0.7);
+            color: #f0e6ff;
             border: 1px solid #7a43b6;
             border-radius: 8px;
         }
-        .stTabs [data-baseweb="tab-list"] { gap: 10px; }
-        .stTabs [data-baseweb="tab"] {
-            background-color: rgba(122, 67, 182, 0.3);
-            color: #e8d8ff;
-            border-radius: 8px 8px 0 0;
-            padding: 0.5rem 1rem;
-        }
-        .stTabs [aria-selected="true"] {
-            background-color: #7a43b6 !important;
-            color: white !important;
-        }
-        .stSuccess {
-            background-color: rgba(0, 128, 0, 0.2);
-            border: 1px solid #00ff88;
-            border-radius: 8px;
-        }
-        .stWarning {
-            background-color: rgba(255, 165, 0, 0.2);
-            border: 1px solid #ffcc00;
-            border-radius: 8px;
-        }
-        .stError {
-            background-color: rgba(255, 0, 0, 0.2);
-            border: 1px solid #ff4444;
-            border-radius: 8px;
-        }
-        hr { border-color: #7a43b6; box-shadow: 0 0 5px #9966ff; }
-        ::-webkit-scrollbar { width: 8px; }
-        ::-webkit-scrollbar-track { background: #190b37; }
-        ::-webkit-scrollbar-thumb { background: #7a43b6; border-radius: 4px; }
-        ::-webkit-scrollbar-thumb:hover { background: #9966ff; }
         </style>
         """,
         unsafe_allow_html=True
     )
 
-    st.title("📰 基于CNN-LSTM的新闻分类与热点挖掘系统")
+    st.title("📰 CNN-LSTM 新闻分类 & 实时热点挖掘系统")
 
-    # -------------------- 第一步：上传模型文件（绕开Git限制） --------------------
+    # 1. 上传模型文件
     st.subheader("第一步：上传模型文件 cnn_lstm_model.pth")
-    uploaded_model = st.file_uploader("选择本地的 cnn_lstm_model.pth 文件", type="pth")
-
-    # 保存上传的模型到服务端本地
+    uploaded_model = st.file_uploader("选择 .pth 模型文件", type="pth")
     if uploaded_model is not None:
         with open(MODEL_CACHE_NAME, "wb") as f:
             f.write(uploaded_model.getbuffer())
-        st.success("✅ 模型文件上传并缓存完成！")
+        st.success("✅ 模型上传并缓存完成")
 
-    # 检查模型是否已存在
     if not os.path.exists(MODEL_CACHE_NAME):
-        st.info("⚠️ 请先上传 cnn_lstm_model.pth 文件，再使用功能")
+        st.info("⚠️ 请先上传模型文件，再使用功能")
         return
 
-    # -------------------- 第二步：加载词表（小文件已放在Git） --------------------
-    vocab_path = "vocab.pth"
-    if not os.path.exists(vocab_path):
-        st.error("❌ 词表文件 vocab.pth 缺失，请检查Git仓库")
-        return
-
+    # 2. 加载词表与模型
     try:
-        # 读取词表大小
         with open("vocab_size.txt", "r", encoding="utf-8") as f:
             vocab_size = int(f.read().strip())
 
-        # 兼容 PyTorch 2.6+
         torch.serialization.add_safe_globals([dict, list])
-        vocab = torch.load(vocab_path, map_location="cpu", weights_only=False)
-
-        # 加载模型
+        vocab = torch.load("vocab.pth", map_location="cpu", weights_only=False)
         model = CNNLSTM(vocab_size=vocab_size).to(DEVICE)
         model.load_state_dict(torch.load(MODEL_CACHE_NAME, map_location=DEVICE, weights_only=False))
         model.eval()
-        st.success("✅ 模型 + 词表 全部加载完成，可以开始使用！")
-
+        st.success("✅ 模型、词表加载完毕，所有功能可用")
     except Exception as e:
-        st.error(f"❌ 加载失败：{str(e)}")
+        st.error(f"❌ 资源加载失败：{str(e)}")
         return
 
-    # -------------------- 功能页面 --------------------
-    tab1, tab2 = st.tabs(["文本分类预测", "新闻热点挖掘"])
+    # 分页标签：两个功能完全保留
+    tab1, tab2 = st.tabs(["📝 单条新闻分类识别", "🌐 网络实时热点挖掘"])
 
-    # 文本分类
+    # ========== 标签1：原有单新闻识别功能（完全保留） ==========
     with tab1:
-        st.subheader("输入新闻内容，自动分类")
-        user_text = st.text_area("请输入新闻文本：", height=200)
+        st.subheader("输入新闻文本，自动识别分类")
+        user_text = st.text_area("请粘贴新闻内容：", height=220)
         if st.button("开始分类", type="primary"):
             if user_text.strip():
-                # 这里修复了之前的变量名错误，完整调用predict_text
                 res = predict_text(model, vocab, vocab_size, user_text)
-                st.success(f"📌 预测分类结果：**{res}**")
+                st.success(f"📌 识别结果：**{res}**")
             else:
                 st.warning("请输入新闻文本内容！")
 
-    # 热点挖掘
+    # ========== 标签2：新增网络热点抓取+聚类+排序+摘要 ==========
     with tab2:
-        st.subheader("测试集新闻热点挖掘 (TF-IDF + DBSCAN)")
-        st.info("默认抽取部分新闻进行聚类，展示TOP5热点事件")
+        st.subheader("🌐 自动抓取全网热点，按热度排序、生成摘要")
+        st.info("点击按钮即可获取最新热点，自动聚类合并相似新闻")
 
-        data_dir = r"E:\PythonProject\data\cnews"
-        test_path = os.path.join(data_dir, "cnews.test.txt")
-        if not os.path.exists(test_path):
-            st.error(f"测试文件不存在：{test_path}")
-            return
+        if st.button("开始挖掘实时热点", type="primary"):
+            with st.spinner("正在抓取新闻、聚类分析，请稍等..."):
+                articles = fetch_latest_news()
+                if len(articles) < 5:
+                    st.warning("获取新闻数量过少，请稍后重试")
+                    return
 
-        def load_test_data(path):
-            texts, labels = [], []
-            with open(path, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    lab, txt = line.split("\t", 1)
-                    texts.append(txt)
-                    labels.append(lab)
-            return texts, labels
+                labels, counter, hot_clusters = cluster_hot_topics(articles)
+                topN = 5
+                st.subheader(f"🔥 TOP {topN} 热门事件（按热度从高到低）")
 
-        test_texts, _ = load_test_data(test_path)
-        sample_texts = test_texts[:2000]
+                for idx, cid in enumerate(hot_clusters[:topN]):
+                    group = [articles[i] for i, lab in enumerate(labels) if lab == cid]
+                    main_title = group[0]["title"]
+                    all_content = " ".join([a["content"] for a in group])
+                    keywords = extract_keywords(all_content)
+                    summary = simple_summary(all_content)
 
-        if st.button("开始挖掘热点", type="primary"):
-            with st.spinner("正在聚类分析，请稍等..."):
-                cluster_label, cluster_cnt, hot_cluster = get_hot_tops(sample_texts)
-                st.subheader("TOP 5 热点事件")
-                for idx, hot_id in enumerate(hot_cluster[:5]):
-                    hot_texts = [sample_texts[i] for i, c in enumerate(cluster_label) if c == hot_id]
                     st.markdown(f"""
-                    **热点{idx+1}**
-                    - 簇内新闻数量：{cluster_cnt[hot_id]} 条
-                    - 示例新闻：{hot_texts[0][:150]}...
+**{idx+1}. {main_title}**
+- 相关新闻数量：{counter[cid]} 条
+- 核心关键词：{', '.join(keywords)}
+- 内容摘要：{summary}
+- 查看原文：[点击跳转]({group[0]['link']})
                     """)
                     st.divider()
 
