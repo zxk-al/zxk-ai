@@ -23,8 +23,8 @@ label_map = {
 # ===================== 【你需要修改这里】百度网盘直链下载地址 =====================
 # 替换成你解析后的百度网盘永久直链
 BAIDU_NETDISK_LINKS = {
-    "cnn_lstm_model.pth": "https://你的网盘直链地址/model.pth",
-    "vocab.pth": "https://你的网盘直链地址/vocab.pth"
+    "cnn_lstm_model.pth": "https://https://pan.baidu.com/s/1thRVG9s5uX0VcKLZEikPXQ?pwd=9527/model.pth",
+    "vocab.pth": "https://https://pan.baidu.com/s/1thRVG9s5uX0VcKLZEikPXQ?pwd=9527/vocab.pth"
 }
 
 # ===================== 模型文件下载工具函数 =====================
