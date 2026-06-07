@@ -13,6 +13,7 @@ SEQ_LEN = 64
 EMB_DIM = 128
 CLASS_NUM = 10
 
+# 新闻分类标签映射
 label_map = {
     0:"体育",1:"娱乐",2:"家居",3:"房产",4:"教育",
     5:"时政",6:"财经",7:"科技",8:"时尚",9:"游戏"
@@ -37,17 +38,20 @@ class CNNLSTM(torch.nn.Module):
     def forward(self, x):
         emb_out = self.emb(x)
         emb_t = emb_out.permute(0, 2, 1)
+
         c3 = self.relu(self.conv3(emb_t)).permute(0, 2, 1)
         c4 = self.relu(self.conv4(emb_t)).permute(0, 2, 1)
         c5 = self.relu(self.conv5(emb_t)).permute(0, 2, 1)
         c_cat = torch.cat([c3, c4, c5], dim=-1)
+
         lstm_out, (hn, _) = self.lstm(c_cat)
         last_h = hn.squeeze(0)
+
         out = self.drop(last_h)
         out = self.fc(out)
         return out
 
-# ===================== 文本工具函数 =====================
+# ===================== 文本处理工具函数 =====================
 def text_cut(text):
     return jieba.lcut(text)
 
@@ -64,6 +68,16 @@ def text2idx(text, vocab, vocab_size, seq_len=64):
     else:
         idx = idx[:seq_len]
     return idx
+
+# ===================== 单文本预测函数（确保全局可调用） =====================
+def predict_text(model, vocab, vocab_size, text):
+    model.eval()
+    with torch.no_grad():
+        idx_arr = text2idx(text, vocab, vocab_size, SEQ_LEN)
+        x = torch.LongTensor([idx_arr]).to(DEVICE)
+        out = model(x)
+        pred_cls = torch.argmax(out, dim=-1).item()
+        return label_map[pred_cls]
 
 # ===================== 热点挖掘函数 =====================
 @st.cache_data
@@ -82,7 +96,7 @@ def get_hot_tops(sample_texts):
 def main():
     st.set_page_config(page_title="CNN-LSTM 新闻分类 & 热点挖掘", layout="wide")
 
-    # 紫色星空CSS样式
+    # 紫色深邃星空背景样式
     st.markdown(
         """
         <style>
@@ -153,7 +167,7 @@ def main():
 
     st.title("📰 基于CNN-LSTM的新闻分类与热点挖掘系统")
 
-    # -------------------- 第一步：上传大模型文件（绕开Git限制） --------------------
+    # -------------------- 第一步：上传模型文件（绕开Git限制） --------------------
     st.subheader("第一步：上传模型文件 cnn_lstm_model.pth")
     uploaded_model = st.file_uploader("选择本地的 cnn_lstm_model.pth 文件", type="pth")
 
@@ -202,6 +216,7 @@ def main():
         user_text = st.text_area("请输入新闻文本：", height=200)
         if st.button("开始分类", type="primary"):
             if user_text.strip():
+                # 这里修复了之前的变量名错误，完整调用predict_text
                 res = predict_text(model, vocab, vocab_size, user_text)
                 st.success(f"📌 预测分类结果：**{res}**")
             else:
