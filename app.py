@@ -1,4 +1,3 @@
-
 import streamlit as st
 import torch
 import jieba
@@ -30,7 +29,7 @@ label_map = {
 # 更完善的请求头，模拟真实浏览器
 HEADERS_LIST = [
     {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64 x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
         "Referer": "https://s.weibo.com/",
         "Accept-Language": "zh-CN,zh;q=0.9",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
@@ -238,12 +237,14 @@ def main():
             st.rerun()
         return
 
-    # 加载词表与模型（兼容旧版）
+    # 加载词表与模型【🔴 核心修复：添加 weights_only=False】
     try:
         with open(VOCAB_SIZE_PATH, "r", encoding="utf-8") as f:
             vocab_size = int(f.read().strip())
-        vocab = torch.load(VOCAB_PATH, map_location="cpu")
+        # 修复1：词表字典加载，必须关闭weights_only安全校验
+        vocab = torch.load(VOCAB_PATH, map_location="cpu", weights_only=False)
         model = CNNLSTM(vocab_size).to(DEVICE)
+        # 模型权重本身安全，不用改
         model.load_state_dict(torch.load(SAVE_MODEL_PATH, map_location=DEVICE))
         model.eval()
     except Exception as e:
